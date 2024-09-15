@@ -15,7 +15,7 @@
             display: block;
             margin: 10px 0 5px;
         }
-        select, input[type="text"], button {
+        select, input[type="text"], input[type="number"], button {
             width: 100%;
             padding: 8px;
             box-sizing: border-box;
@@ -25,6 +25,28 @@
             padding: 15px;
             background-color: #f4f4f4;
             border-radius: 5px;
+        }
+        #loading {
+            text-align: center;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3; /* Light grey */
+            border-top: 4px solid #3498db; /* Blue */
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 2s linear infinite;
+            margin: 0 auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .hidden {
+            display: none;
+        }
+        button {
+            margin-top: 10px;
         }
     </style>
 </head>
@@ -44,11 +66,16 @@
             <label for="target-currency">Select target currency:</label>
             <select id="target-currency"></select>
 
+            <label for="amount">Enter amount in target currency for calculation:</label>
+            <input type="number" id="amount" placeholder="100" value="100">
+
             <button id="get-rule">Get Mental Math Rule</button>
         </div>
 
         <div id="result"></div>
+        <button id="do-better" class="hidden">Do Better</button>
         <div id="loading" style="display:none;">
+            <div class="spinner"></div>
             <p>Loading...</p>
         </div>
     </div>
@@ -59,15 +86,26 @@
         const apiKeySection = document.getElementById('api-key-section');
         const currencySection = document.getElementById('currency-section');
         const resultDiv = document.getElementById('result');
+        const doBetterButton = document.getElementById('do-better');
+        const loadingDiv = document.getElementById('loading');
 
         const apiKeyInput = document.getElementById('api-key');
         const saveKeyButton = document.getElementById('save-key');
 
         const baseCurrencySelect = document.getElementById('base-currency');
         const targetCurrencySelect = document.getElementById('target-currency');
+        const amountInput = document.getElementById('amount');
         const getRuleButton = document.getElementById('get-rule');
 
         let apiKey = '';
+        let rate = null;
+        let initialPrompt = '';
+        let firstReply = '';
+        let firstRule = '';
+        let firstCode = '';
+        let baseCurrency = '';
+        let targetCurrency = '';
+        let amount = 100; // Default amount
 
         document.addEventListener('DOMContentLoaded', () => {
             // Load API key from local storage
@@ -135,13 +173,15 @@
         }
 
         getRuleButton.addEventListener('click', () => {
-            const baseCurrency = baseCurrencySelect.value;
-            const targetCurrency = targetCurrencySelect.value;
+            baseCurrency = baseCurrencySelect.value;
+            targetCurrency = targetCurrencySelect.value;
+            amount = parseFloat(amountInput.value) || 100; // Use user-specified amount or default to 100
             if (baseCurrency && targetCurrency) {
                 getExchangeRate(baseCurrency, targetCurrency)
-                    .then(rate => {
-                        if (rate) {
-                            generateMentalMathRule(baseCurrency, targetCurrency, rate);
+                    .then(fetchedRate => {
+                        if (fetchedRate) {
+                            rate = fetchedRate;
+                            generateMentalMathRule();
                         } else {
                             resultDiv.textContent = 'Unable to retrieve exchange rate.';
                         }
@@ -165,8 +205,8 @@
                 });
         }
 
-        function generateMentalMathRule(baseCurrency, targetCurrency, rate) {
-            const initialPrompt = `
+        function generateMentalMathRule() {
+            initialPrompt = `
 Provide a simple mental math rule to convert prices from ${targetCurrency.toUpperCase()} back to ${baseCurrency.toUpperCase()} given an exchange rate of 1 ${baseCurrency.toUpperCase()} = ${rate.toFixed(4)} ${targetCurrency.toUpperCase()}.
 
 Make the rule as succinct as possible, omitting text like "To convert between X and Y", qualifiers and caveats like "approximately" and any other details.
@@ -182,7 +222,8 @@ Let's think through this problem step by step.`;
             console.log('Initial Prompt:', initialPrompt); // Log the initial prompt
 
             resultDiv.textContent = '';
-            document.getElementById('loading').style.display = 'block'; // Show loading indicator
+            doBetterButton.classList.add('hidden'); // Hide "Do Better" button
+            loadingDiv.style.display = 'block'; // Show loading indicator
 
             fetch('https://api.openai.com/v1/chat/completions', {
                 method: 'POST',
@@ -199,163 +240,180 @@ Let's think through this problem step by step.`;
             .then(data => {
                 console.log('First Response:', data); // Log the first response
 
+                loadingDiv.style.display = 'none'; // Hide loading indicator
+
                 if (data.choices && data.choices.length > 0) {
-                    const firstReply = data.choices[0].message.content;
-                    // Extract the rule
-                    const firstRuleMatch = firstReply.match(/<rule>([\s\S]*?)<\/rule>/i);
-                    let firstRule = '';
-                    if (firstRuleMatch && firstRuleMatch[1]) {
-                        firstRule = firstRuleMatch[1].trim();
-                    } else {
-                        firstRule = 'Could not extract the rule from the first response.';
-                    }
-
-                    // Extract the code
-                    const firstCodeMatch = firstReply.match(/<code>([\s\S]*?)<\/code>/i);
-                    let firstCode = '';
-                    if (firstCodeMatch && firstCodeMatch[1]) {
-                        firstCode = firstCodeMatch[1].trim();
-                    } else {
-                        firstCode = '// Could not extract the code from the first response.';
-                    }
-
-                    // Now prepare the follow-up prompt
-                    const followUpPrompt = `Think step by step again and do better.
-
-Remember to output the rule enclosed in <rule> and </rule> tags, and the JavaScript function enclosed in <code> and </code> tags.`;
-
-                    console.log('Follow-up Prompt:', followUpPrompt); // Log the follow-up prompt
-
-                    // Call the API again with the follow-up prompt
-                    fetch('https://api.openai.com/v1/chat/completions', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': 'Bearer ' + apiKey
-                        },
-                        body: JSON.stringify({
-                            model: 'gpt-4o-mini',
-                            messages: [
-                                { role: 'user', content: initialPrompt },
-                                { role: 'assistant', content: firstReply },
-                                { role: 'user', content: followUpPrompt }
-                            ]
-                        })
-                    })
-                    .then(response => response.json())
-                    .then(secondData => {
-                        document.getElementById('loading').style.display = 'none'; // Hide loading indicator
-                        console.log('Second Response:', secondData); // Log the second response
-
-                        if (secondData.choices && secondData.choices.length > 0) {
-                            const secondReply = secondData.choices[0].message.content;
-                            // Extract the rule
-                            const secondRuleMatch = secondReply.match(/<rule>([\s\S]*?)<\/rule>/i);
-                            let secondRule = '';
-                            if (secondRuleMatch && secondRuleMatch[1]) {
-                                secondRule = secondRuleMatch[1].trim();
-                            } else {
-                                secondRule = 'Could not extract the rule from the second response.';
-                            }
-
-                            // Extract the code
-                            const secondCodeMatch = secondReply.match(/<code>([\s\S]*?)<\/code>/i);
-                            let secondCode = '';
-                            if (secondCodeMatch && secondCodeMatch[1]) {
-                                secondCode = secondCodeMatch[1].trim();
-                            } else {
-                                secondCode = '// Could not extract the code from the second response.';
-                            }
-
-                            // Perform a test conversion using both functions
-                            const testPrice = 100; // Example price in target currency
-                            let firstConvertedPrice = null;
-                            let secondConvertedPrice = null;
-                            let actualConvertedPrice = (1 / rate) * testPrice;
-
-                            // Evaluate first function
-                            try {
-                                eval(firstCode); // Defines convertPrice function
-                                firstConvertedPrice = convertPrice(testPrice);
-                            } catch (e) {
-                                console.error('Error evaluating first function:', e);
-                                firstConvertedPrice = 'Error';
-                            }
-
-                            // Clear the function for safety
-                            convertPrice = undefined;
-
-                            // Evaluate second function
-                            try {
-                                eval(secondCode); // Defines convertPrice function
-                                secondConvertedPrice = convertPrice(testPrice);
-                            } catch (e) {
-                                console.error('Error evaluating second function:', e);
-                                secondConvertedPrice = 'Error';
-                            }
-
-                            // Calculate deltas
-                            let firstDelta = null;
-                            if (typeof firstConvertedPrice === 'number') {
-                                firstDelta = Math.abs((firstConvertedPrice - actualConvertedPrice) / actualConvertedPrice) * 100;
-                            }
-
-                            let secondDelta = null;
-                            if (typeof secondConvertedPrice === 'number') {
-                                secondDelta = Math.abs((secondConvertedPrice - actualConvertedPrice) / actualConvertedPrice) * 100;
-                            }
-
-                            // Display results
-                            resultDiv.innerHTML = `
-                                <h3>First Rule:</h3>
-                                <p>${firstRule}</p>
-                                <pre><code>${firstCode}</code></pre>
-                                <p>Converted Price (using rule): ${firstConvertedPrice}</p>
-                                <p>Actual Converted Price: ${actualConvertedPrice.toFixed(2)}</p>
-                                <p>Delta: ${firstDelta !== null ? firstDelta.toFixed(2) + '%' : 'N/A'}</p>
-                                <hr>
-                                <h3>Improved Rule:</h3>
-                                <p>${secondRule}</p>
-                                <pre><code>${secondCode}</code></pre>
-                                <p>Converted Price (using rule): ${secondConvertedPrice}</p>
-                                <p>Actual Converted Price: ${actualConvertedPrice.toFixed(2)}</p>
-                                <p>Delta: ${secondDelta !== null ? secondDelta.toFixed(2) + '%' : 'N/A'}</p>
-                            `;
-                        } else if (secondData.error) {
-                            resultDiv.textContent = 'Error: ' + secondData.error.message;
-                        } else {
-                            resultDiv.textContent = 'No response from OpenAI API on the second attempt.';
-                        }
-                    })
-                    .catch(error => {
-                        document.getElementById('loading').style.display = 'none'; // Hide loading indicator
-                        console.error('Error on second API call:', error);
-                        resultDiv.textContent = 'Error calling OpenAI API on the second attempt.';
-                    });
-
+                    firstReply = data.choices[0].message.content;
+                    parseAndDisplayResult(firstReply, 'First');
+                    doBetterButton.classList.remove('hidden'); // Show "Do Better" button
                 } else if (data.error) {
-                    document.getElementById('loading').style.display = 'none'; // Hide loading indicator
                     resultDiv.textContent = 'Error: ' + data.error.message;
                 } else {
-                    document.getElementById('loading').style.display = 'none'; // Hide loading indicator
                     resultDiv.textContent = 'No response from OpenAI API on the first attempt.';
                 }
             })
             .catch(error => {
-                document.getElementById('loading').style.display = 'none'; // Hide loading indicator
+                loadingDiv.style.display = 'none'; // Hide loading indicator
                 console.error('Error calling OpenAI API:', error);
                 resultDiv.textContent = 'Error calling OpenAI API.';
             });
         }
 
+        function parseAndDisplayResult(replyContent, attemptLabel) {
+            // Extract the rule
+            const ruleMatch = replyContent.match(/<rule>([\s\S]*?)<\/rule>/i);
+            let rule = '';
+            if (ruleMatch && ruleMatch[1]) {
+                rule = ruleMatch[1].trim();
+            } else {
+                rule = 'Could not extract the rule from the response.';
+            }
+
+            // Extract the code
+            const codeMatch = replyContent.match(/<code>([\s\S]*?)<\/code>/i);
+            let code = '';
+            if (codeMatch && codeMatch[1]) {
+                code = codeMatch[1].trim();
+            } else {
+                code = '// Could not extract the code from the response.';
+            }
+
+            // Perform a test conversion using the function
+            let convertedPrice = null;
+            let actualConvertedPrice = (1 / rate) * amount;
+
+            // Evaluate the function safely
+            try {
+                // Use Function constructor to avoid using eval()
+                const func = new Function('price', code + '; return convertPrice(price);');
+                convertedPrice = func(amount);
+            } catch (e) {
+                console.error('Error evaluating function:', e);
+                convertedPrice = 'Error';
+            }
+
+            // Calculate delta
+            let delta = null;
+            if (typeof convertedPrice === 'number') {
+                delta = Math.abs((convertedPrice - actualConvertedPrice) / actualConvertedPrice) * 100;
+            }
+
+            // Display results
+            resultDiv.innerHTML = `
+                <h3>${attemptLabel} Rule:</h3>
+                <p>${rule}</p>
+                <pre><code>${code}</code></pre>
+                <p>Converted Price (using rule): ${convertedPrice}</p>
+                <p>Actual Converted Price: ${actualConvertedPrice.toFixed(2)}</p>
+                <p>Delta: ${delta !== null ? delta.toFixed(2) + '%' : 'N/A'}</p>
+            `;
+        }
+
+        doBetterButton.addEventListener('click', () => {
+            const followUpPrompt = `Think step by step again and do better.
+
+Remember to output the rule enclosed in <rule> and </rule> tags, and the JavaScript function enclosed in <code> and </code> tags.`;
+
+            console.log('Follow-up Prompt:', followUpPrompt); // Log the follow-up prompt
+
+            loadingDiv.style.display = 'block'; // Show loading indicator
+            doBetterButton.classList.add('hidden'); // Hide "Do Better" button
+
+            fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + apiKey
+                },
+                body: JSON.stringify({
+                    model: 'gpt-4o-mini',
+                    messages: [
+                        { role: 'user', content: initialPrompt },
+                        { role: 'assistant', content: firstReply },
+                        { role: 'user', content: followUpPrompt }
+                    ]
+                })
+            })
+            .then(response => response.json())
+            .then(secondData => {
+                loadingDiv.style.display = 'none'; // Hide loading indicator
+                console.log('Second Response:', secondData); // Log the second response
+
+                if (secondData.choices && secondData.choices.length > 0) {
+                    const secondReply = secondData.choices[0].message.content;
+                    parseAndDisplaySecondResult(secondReply);
+                } else if (secondData.error) {
+                    resultDiv.textContent = 'Error: ' + secondData.error.message;
+                } else {
+                    resultDiv.textContent = 'No response from OpenAI API on the second attempt.';
+                }
+            })
+            .catch(error => {
+                loadingDiv.style.display = 'none'; // Hide loading indicator
+                console.error('Error on second API call:', error);
+                resultDiv.textContent = 'Error calling OpenAI API on the second attempt.';
+            });
+        });
+
+        function parseAndDisplaySecondResult(replyContent) {
+            // Extract the rule
+            const ruleMatch = replyContent.match(/<rule>([\s\S]*?)<\/rule>/i);
+            let rule = '';
+            if (ruleMatch && ruleMatch[1]) {
+                rule = ruleMatch[1].trim();
+            } else {
+                rule = 'Could not extract the rule from the response.';
+            }
+
+            // Extract the code
+            const codeMatch = replyContent.match(/<code>([\s\S]*?)<\/code>/i);
+            let code = '';
+            if (codeMatch && codeMatch[1]) {
+                code = codeMatch[1].trim();
+            } else {
+                code = '// Could not extract the code from the response.';
+            }
+
+            // Perform a test conversion using the function
+            let convertedPrice = null;
+            let actualConvertedPrice = (1 / rate) * amount;
+
+            // Evaluate the function safely
+            try {
+                // Use Function constructor to avoid using eval()
+                const func = new Function('price', code + '; return convertPrice(price);');
+                convertedPrice = func(amount);
+            } catch (e) {
+                console.error('Error evaluating function:', e);
+                convertedPrice = 'Error';
+            }
+
+            // Calculate delta
+            let delta = null;
+            if (typeof convertedPrice === 'number') {
+                delta = Math.abs((convertedPrice - actualConvertedPrice) / actualConvertedPrice) * 100;
+            }
+
+            // Append results to existing content
+            resultDiv.innerHTML += `
+                <hr>
+                <h3>Improved Rule:</h3>
+                <p>${rule}</p>
+                <pre><code>${code}</code></pre>
+                <p>Converted Price (using rule): ${convertedPrice}</p>
+                <p>Actual Converted Price: ${actualConvertedPrice.toFixed(2)}</p>
+                <p>Delta: ${delta !== null ? delta.toFixed(2) + '%' : 'N/A'}</p>
+            `;
+        }
+
         // Add these event listeners after the existing code
         baseCurrencySelect.addEventListener('change', () => {
-            const baseCurrency = baseCurrencySelect.value;
+            baseCurrency = baseCurrencySelect.value;
             localStorage.setItem('base_currency', baseCurrency);
         });
 
         targetCurrencySelect.addEventListener('change', () => {
-            const targetCurrency = targetCurrencySelect.value;
+            targetCurrency = targetCurrencySelect.value;
             localStorage.setItem('target_currency', targetCurrency);
         });
     </script>
