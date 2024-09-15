@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mental Forex</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        #app {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        label {
+            display: block;
+            margin: 10px 0 5px;
+        }
+        select, input[type="text"], button {
+            width: 100%;
+            padding: 8px;
+            box-sizing: border-box;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f4f4f4;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <h1>Mental Forex</h1>
+        <div id="api-key-section">
+            <label for="api-key">Enter your OpenAI API Key:</label>
+            <input type="text" id="api-key" placeholder="sk-...">
+            <button id="save-key">Save API Key</button>
+        </div>
+
+        <div id="currency-section" style="display:none;">
+            <label for="base-currency">Select base currency:</label>
+            <select id="base-currency"></select>
+
+            <label for="target-currency">Select target currency:</label>
+            <select id="target-currency"></select>
+
+            <button id="get-rule">Get Mental Math Rule</button>
+        </div>
+
+        <div id="result"></div>
+        <div id="loading" style="display:none;">
+            <p>Loading...</p>
+        </div>
+    </div>
+
+    <script>
+        const currenciesUrl = 'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies.json';
+
+        const apiKeySection = document.getElementById('api-key-section');
+        const currencySection = document.getElementById('currency-section');
+        const resultDiv = document.getElementById('result');
+
+        const apiKeyInput = document.getElementById('api-key');
+        const saveKeyButton = document.getElementById('save-key');
+
+        const baseCurrencySelect = document.getElementById('base-currency');
+        const targetCurrencySelect = document.getElementById('target-currency');
+        const getRuleButton = document.getElementById('get-rule');
+
+        let apiKey = '';
+
+        document.addEventListener('DOMContentLoaded', () => {
+            // Load API key from local storage
+            const cachedApiKey = localStorage.getItem('openai_api_key');
+            if (cachedApiKey) {
+                apiKey = cachedApiKey;
+                apiKeyInput.value = apiKey;
+                apiKeySection.style.display = 'none';
+                currencySection.style.display = 'block';
+                loadCurrencies();
+            }
+
+            // Load currencies from local storage or fetch
+            const cachedCurrencies = localStorage.getItem('currencies');
+            if (cachedCurrencies) {
+                const currencies = JSON.parse(cachedCurrencies);
+                const savedBaseCurrency = localStorage.getItem('base_currency') || 'usd';
+                const savedTargetCurrency = localStorage.getItem('target_currency') || 'eur';
+                populateCurrencySelect(baseCurrencySelect, currencies, savedBaseCurrency);
+                populateCurrencySelect(targetCurrencySelect, currencies, savedTargetCurrency);
+            } else {
+                loadCurrencies();
+            }
+        });
+
+        saveKeyButton.addEventListener('click', () => {
+            apiKey = apiKeyInput.value.trim();
+            if (apiKey) {
+                localStorage.setItem('openai_api_key', apiKey); // Cache API key
+                apiKeySection.style.display = 'none';
+                currencySection.style.display = 'block';
+                loadCurrencies();
+            } else {
+                alert('Please enter a valid API key.');
+            }
+        });
+
+        function loadCurrencies() {
+            fetch(currenciesUrl)
+                .then(response => response.json())
+                .then(data => {
+                    localStorage.setItem('currencies', JSON.stringify(data)); // Cache currencies
+                    const savedBaseCurrency = localStorage.getItem('base_currency') || 'usd';
+                    const savedTargetCurrency = localStorage.getItem('target_currency') || 'eur';
+                    populateCurrencySelect(baseCurrencySelect, data, savedBaseCurrency);
+                    populateCurrencySelect(targetCurrencySelect, data, savedTargetCurrency);
+                })
+                .catch(error => {
+                    console.error('Error loading currencies:', error);
+                });
+        }
+
+        function populateCurrencySelect(selectElement, currencies, selectedCurrency) {
+            selectElement.innerHTML = ''; // Clear existing options
+
+            for (const [code, name] of Object.entries(currencies)) {
+                const option = document.createElement('option');
+                option.value = code;
+                option.text = `${code.toUpperCase()} - ${name}`;
+                if (code === selectedCurrency) {
+                    option.selected = true;
+                }
+                selectElement.appendChild(option);
+            }
+        }
+
+        getRuleButton.addEventListener('click', () => {
+            const baseCurrency = baseCurrencySelect.value;
+            const targetCurrency = targetCurrencySelect.value;
+            if (baseCurrency && targetCurrency) {
+                getExchangeRate(baseCurrency, targetCurrency)
+                    .then(rate => {
+                        if (rate) {
+                            generateMentalMathRule(baseCurrency, targetCurrency, rate);
+                        } else {
+                            resultDiv.textContent = 'Unable to retrieve exchange rate.';
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching exchange rate:', error);
+                        resultDiv.textContent = 'Error fetching exchange rate.';
+                    });
+            } else {
+                alert('Please select both base and target currencies.');
+            }
+        });
+
+        function getExchangeRate(baseCurrency, targetCurrency) {
+            const url = `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/${baseCurrency}.json`;
+            return fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    const rate = data[baseCurrency][targetCurrency];
+                    return rate;
+                });
+        }
+
+        function generateMentalMathRule(baseCurrency, targetCurrency, rate) {
+            const initialPrompt = `
+Provide a simple mental math rule to convert prices from ${targetCurrency.toUpperCase()} back to ${baseCurrency.toUpperCase()} given an exchange rate of 1 ${baseCurrency.toUpperCase()} = ${rate.toFixed(4)} ${targetCurrency.toUpperCase()}.
+
+Make the rule as succinct as possible, omitting text like "To convert between X and Y", qualifiers and caveats like "approximately" and any other details.
+
+For example, if 1 GBP = 5514 COP, a good rule is "Drop the last 3 digits and divide by 5", or "Divide by 5000". Avoid:
+- rules with decimal numbers, for example if you work out the answer is "multiply by 1.1", instead express it as "multiply by 10 and add 10%"
+- dividing by any number other than 2, 5, 10. For example, if the answer is "divide by 1.1" or "multiply by 10 and then divide by 11", instead express it as "subtract 10%"
+
+At the end, output the rule enclosed in <rule> and </rule> tags, and implement the rule in a JavaScript function named \`convertPrice\` that takes a price in ${targetCurrency.toUpperCase()} and returns the converted price in ${baseCurrency.toUpperCase()}, enclosed in <code> and </code> tags.
+
+Let's think through this problem step by step.`;
+
+            console.log('Initial Prompt:', initialPrompt); // Log the initial prompt
+
+            resultDiv.textContent = '';
+            document.getElementById('loading').style.display = 'block'; // Show loading indicator
+
+            fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + apiKey
+                },
+                body: JSON.stringify({
+                    model: 'gpt-4o-mini',
+                    messages: [{ role: 'user', content: initialPrompt }]
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('First Response:', data); // Log the first response
+
+                if (data.choices && data.choices.length > 0) {
+                    const firstReply = data.choices[0].message.content;
+                    // Extract the rule
+                    const firstRuleMatch = firstReply.match(/<rule>([\s\S]*?)<\/rule>/i);
+                    let firstRule = '';
+                    if (firstRuleMatch && firstRuleMatch[1]) {
+                        firstRule = firstRuleMatch[1].trim();
+                    } else {
+                        firstRule = 'Could not extract the rule from the first response.';
+                    }
+
+                    // Extract the code
+                    const firstCodeMatch = firstReply.match(/<code>([\s\S]*?)<\/code>/i);
+                    let firstCode = '';
+                    if (firstCodeMatch && firstCodeMatch[1]) {
+                        firstCode = firstCodeMatch[1].trim();
+                    } else {
+                        firstCode = '// Could not extract the code from the first response.';
+                    }
+
+                    // Now prepare the follow-up prompt
+                    const followUpPrompt = `Think step by step again and do better.
+
+Remember to output the rule enclosed in <rule> and </rule> tags, and the JavaScript function enclosed in <code> and </code> tags.`;
+
+                    console.log('Follow-up Prompt:', followUpPrompt); // Log the follow-up prompt
+
+                    // Call the API again with the follow-up prompt
+                    fetch('https://api.openai.com/v1/chat/completions', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + apiKey
+                        },
+                        body: JSON.stringify({
+                            model: 'gpt-4o-mini',
+                            messages: [
+                                { role: 'user', content: initialPrompt },
+                                { role: 'assistant', content: firstReply },
+                                { role: 'user', content: followUpPrompt }
+                            ]
+                        })
+                    })
+                    .then(response => response.json())
+                    .then(secondData => {
+                        document.getElementById('loading').style.display = 'none'; // Hide loading indicator
+                        console.log('Second Response:', secondData); // Log the second response
+
+                        if (secondData.choices && secondData.choices.length > 0) {
+                            const secondReply = secondData.choices[0].message.content;
+                            // Extract the rule
+                            const secondRuleMatch = secondReply.match(/<rule>([\s\S]*?)<\/rule>/i);
+                            let secondRule = '';
+                            if (secondRuleMatch && secondRuleMatch[1]) {
+                                secondRule = secondRuleMatch[1].trim();
+                            } else {
+                                secondRule = 'Could not extract the rule from the second response.';
+                            }
+
+                            // Extract the code
+                            const secondCodeMatch = secondReply.match(/<code>([\s\S]*?)<\/code>/i);
+                            let secondCode = '';
+                            if (secondCodeMatch && secondCodeMatch[1]) {
+                                secondCode = secondCodeMatch[1].trim();
+                            } else {
+                                secondCode = '// Could not extract the code from the second response.';
+                            }
+
+                            // Perform a test conversion using both functions
+                            const testPrice = 100; // Example price in target currency
+                            let firstConvertedPrice = null;
+                            let secondConvertedPrice = null;
+                            let actualConvertedPrice = (1 / rate) * testPrice;
+
+                            // Evaluate first function
+                            try {
+                                eval(firstCode); // Defines convertPrice function
+                                firstConvertedPrice = convertPrice(testPrice);
+                            } catch (e) {
+                                console.error('Error evaluating first function:', e);
+                                firstConvertedPrice = 'Error';
+                            }
+
+                            // Clear the function for safety
+                            convertPrice = undefined;
+
+                            // Evaluate second function
+                            try {
+                                eval(secondCode); // Defines convertPrice function
+                                secondConvertedPrice = convertPrice(testPrice);
+                            } catch (e) {
+                                console.error('Error evaluating second function:', e);
+                                secondConvertedPrice = 'Error';
+                            }
+
+                            // Calculate deltas
+                            let firstDelta = null;
+                            if (typeof firstConvertedPrice === 'number') {
+                                firstDelta = Math.abs((firstConvertedPrice - actualConvertedPrice) / actualConvertedPrice) * 100;
+                            }
+
+                            let secondDelta = null;
+                            if (typeof secondConvertedPrice === 'number') {
+                                secondDelta = Math.abs((secondConvertedPrice - actualConvertedPrice) / actualConvertedPrice) * 100;
+                            }
+
+                            // Display results
+                            resultDiv.innerHTML = `
+                                <h3>First Rule:</h3>
+                                <p>${firstRule}</p>
+                                <pre><code>${firstCode}</code></pre>
+                                <p>Converted Price (using rule): ${firstConvertedPrice}</p>
+                                <p>Actual Converted Price: ${actualConvertedPrice.toFixed(2)}</p>
+                                <p>Delta: ${firstDelta !== null ? firstDelta.toFixed(2) + '%' : 'N/A'}</p>
+                                <hr>
+                                <h3>Improved Rule:</h3>
+                                <p>${secondRule}</p>
+                                <pre><code>${secondCode}</code></pre>
+                                <p>Converted Price (using rule): ${secondConvertedPrice}</p>
+                                <p>Actual Converted Price: ${actualConvertedPrice.toFixed(2)}</p>
+                                <p>Delta: ${secondDelta !== null ? secondDelta.toFixed(2) + '%' : 'N/A'}</p>
+                            `;
+                        } else if (secondData.error) {
+                            resultDiv.textContent = 'Error: ' + secondData.error.message;
+                        } else {
+                            resultDiv.textContent = 'No response from OpenAI API on the second attempt.';
+                        }
+                    })
+                    .catch(error => {
+                        document.getElementById('loading').style.display = 'none'; // Hide loading indicator
+                        console.error('Error on second API call:', error);
+                        resultDiv.textContent = 'Error calling OpenAI API on the second attempt.';
+                    });
+
+                } else if (data.error) {
+                    document.getElementById('loading').style.display = 'none'; // Hide loading indicator
+                    resultDiv.textContent = 'Error: ' + data.error.message;
+                } else {
+                    document.getElementById('loading').style.display = 'none'; // Hide loading indicator
+                    resultDiv.textContent = 'No response from OpenAI API on the first attempt.';
+                }
+            })
+            .catch(error => {
+                document.getElementById('loading').style.display = 'none'; // Hide loading indicator
+                console.error('Error calling OpenAI API:', error);
+                resultDiv.textContent = 'Error calling OpenAI API.';
+            });
+        }
+
+        // Add these event listeners after the existing code
+        baseCurrencySelect.addEventListener('change', () => {
+            const baseCurrency = baseCurrencySelect.value;
+            localStorage.setItem('base_currency', baseCurrency);
+        });
+
+        targetCurrencySelect.addEventListener('change', () => {
+            const targetCurrency = targetCurrencySelect.value;
+            localStorage.setItem('target_currency', targetCurrency);
+        });
+    </script>
+</body>
+</html>
